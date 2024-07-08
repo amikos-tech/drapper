@@ -1,19 +1,21 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
-	dapr "github.com/dapr/go-sdk/client"
 	"github.com/dapr/go-sdk/service/common"
 	daprd "github.com/dapr/go-sdk/service/http"
 	"net/http"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
-	"time"
+	"syscall"
 )
 
-func daprInit() {
+// daprInit initializes Dapr
+func daprInit() { //nolint:deadcode,unused
 	cmd := exec.Command("dapr", "init")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -24,7 +26,7 @@ func daprInit() {
 	}
 }
 
-func startDaprSidecar(ctx context.Context, appID string, appPort int, daprPort int, daprGrpcPort int, componentsPath string, done chan bool) {
+func startDaprSidecar(ctx context.Context, appID string, appPort int, daprPort int, daprGrpcPort int, componentsPath string, done chan int) {
 	cmd := exec.CommandContext(ctx, "dapr",
 		"run",
 		"--app-id", appID,
@@ -33,17 +35,36 @@ func startDaprSidecar(ctx context.Context, appID string, appPort int, daprPort i
 		"--dapr-grpc-port", fmt.Sprintf("%d", daprGrpcPort),
 		"--components-path", componentsPath,
 	)
-	cmd.Stdout = os.Stdout
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Setpgid: true, // Ensure the command runs in its own process group
+	}
+
+	//cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	err := cmd.Start()
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		fmt.Printf("Error getting stdout pipe: %v\n", err)
+		return
+	}
+	err = cmd.Start()
+
 	if err != nil {
 		fmt.Printf("Error starting Dapr sidecar: %v\n", err)
-		done <- false
+		done <- -1
 		return
 	} else {
-		fmt.Println("Dapr sidecar started successfully")
-		done <- true
+		scanner := bufio.NewScanner(stdout)
+		for scanner.Scan() {
+			line := scanner.Text()
+			fmt.Printf("%s\n", line)
+			// Check if the line contains the specific log message
+			if strings.Contains(line, "You're up and running") {
+				fmt.Println("Dapr sidecar started successfully")
+				done <- cmd.Process.Pid
+			}
+		}
+
 	}
 
 	// Wait for the command to finish
@@ -54,70 +75,48 @@ func startDaprSidecar(ctx context.Context, appID string, appPort int, daprPort i
 	}
 }
 
-func main() {
-	done := make(chan bool)
-	ctx, _ := context.WithCancel(context.Background())
-	s := daprd.NewService(":8886")
-	var wg sync.WaitGroup
-	wg.Add(1)
-	waitCh := make(chan any)
+func RegisterEventHandler(ctx context.Context, pubsubName string, topic string, route string, handler func(ctx context.Context, e *common.TopicEvent) (retry bool, err error)) (cancel func(), err error) {
+	s := daprd.NewService(":8886") //TODO get random free port
 	// Create a mock subscription handler
-	handler := func(ctx context.Context, e *common.TopicEvent) (retry bool, err error) {
-		// Add your assertions here
-		fmt.Printf("Received event: %s %v\n", e.Type, e.Data)
-		waitCh <- e.Data
-		return false, nil
-	}
-	err := s.AddTopicEventHandler(&common.Subscription{
-		PubsubName: "pubsub",
-		Topic:      "search-result",
-		Route:      "/search",
+	err = s.AddTopicEventHandler(&common.Subscription{
+		PubsubName: pubsubName,
+		Topic:      topic,
+		Route:      route,
 	}, handler)
 	if err != nil {
-		fmt.Println(err)
 		return
 	}
-
+	var wg sync.WaitGroup
+	wg.Add(1)
 	go func() {
-		fmt.Printf("Starting server\n")
+		defer wg.Done()
+		fmt.Printf("Starting consumer service\n")
 		if err := s.Start(); err != nil && err != http.ErrServerClosed {
+			fmt.Printf("error: %v", err)
 			return
 		}
+		fmt.Println("Consumer service stopped")
 	}()
-
-	go startDaprSidecar(ctx, "myapp", 8886, 3500, 50001, "./components", done)
-
-	// Wait for the Dapr sidecar to start
-	if <-done {
-		fmt.Println("Dapr sidecar is running in the background")
+	daprStarted := make(chan int)
+	go startDaprSidecar(ctx, "myapp", 8886, 3500, 50001, "./components", daprStarted)
+	var sidecarpid int = -1
+	if x := <-daprStarted; x > 0 {
+		fmt.Println("Dapr sidecar started successfully", x)
+		sidecarpid = x
 	} else {
-		fmt.Println("Failed to start Dapr sidecar")
-		return
+		return nil, fmt.Errorf("Error starting Dapr sidecar")
 	}
-	daprClient, err := dapr.NewClient()
-
-	err = daprClient.PublishEvent(context.Background(), "pubsub", "search-result", []byte("hello world111"), dapr.PublishEventWithMetadata(map[string]string{"cloudevent.type": "b"}))
-	if err != nil {
-		return
-	}
-	fmt.Println("Published event")
-	timeout := time.After(30 * time.Second)
-	select {
-	case <-waitCh:
-		defer s.Stop()
-		wg.Done()
-	case <-timeout:
-		fmt.Println("Timeout")
-		return
-	}
-
-	//time.Sleep(10 * time.Second)
-	//fmt.Println("Stopping Dapr sidecar...")
-	//
-	//// Stop the Dapr sidecar
-	////cancel()
-	//
-	//// Give some time to clean up
-	//time.Sleep(2 * time.Second)
-	//fmt.Println("Main application finished")
+	return func() {
+		err := s.GracefulStop()
+		if err != nil {
+			fmt.Printf("Error stopping server: %v\n", err)
+		}
+		fmt.Println("Stopping ....")
+		if sidecarpid > 0 {
+			err := syscall.Kill(-sidecarpid, syscall.SIGTERM)
+			if err != nil {
+				fmt.Printf("Error stopping Dapr sidecar proccess: %d - %v\n", sidecarpid, err)
+			}
+		}
+	}, nil
 }
