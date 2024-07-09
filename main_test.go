@@ -12,6 +12,7 @@ import (
 func TestEventH(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	// Create a mock subscription handler
+	EnsureDapr()
 	eventReceived := make(chan bool)
 	handler := func(ctx context.Context, e *common.TopicEvent) (retry bool, err error) {
 		t.Logf("Received event: %s %v\n", e.Type, e.Data)
@@ -27,18 +28,16 @@ func TestEventH(t *testing.T) {
 
 	err = daprClient.PublishEvent(context.Background(), "pubsub", "search-result", []byte(`{"data": "hello world"}`), dapr.PublishEventWithMetadata(map[string]string{"cloudevent.type": "test"}))
 	require.NoError(t, err, "Error publishing event: %v\n", err)
+	t.Cleanup(func() {
+		if closeEvent != nil {
+			closeEvent()
+		}
+		cancel()
+	})
 	select {
 	case <-eventReceived:
 		t.Log("Event received successfully")
-		if closeEvent != nil {
-			closeEvent()
-		}
-		cancel()
 	case <-time.After(10 * time.Second): // Adjust timeout as necessary
-		if closeEvent != nil {
-			closeEvent()
-		}
-		cancel()
 		t.Fatalf("Timed out waiting for event")
 	}
 
