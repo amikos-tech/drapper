@@ -9,6 +9,11 @@ This a naive wrapper around Dapr for integration testing your Dapr applications.
 go get github.com/amikos-tech/darpper
 ```
 
+### Assumptions
+
+- Docker is installed on the machine (used for self-hosted Dapr)
+- Dapr CLI is installed on the machine and on the PATH
+
 ## Usage
 
 ```go

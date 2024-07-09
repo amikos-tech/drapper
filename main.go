@@ -16,7 +16,7 @@ import (
 
 // daprInit initializes Dapr
 func daprInit() { //nolint:deadcode,unused
-	cmd := exec.Command("dapr", "init")
+	cmd := exec.Command("dapr", "init", "--dev")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	err := cmd.Run()
@@ -24,6 +24,30 @@ func daprInit() { //nolint:deadcode,unused
 		fmt.Printf("Error initializing Dapr: %v\n", err)
 		return
 	}
+}
+
+func daprUninstall() {
+	cmd := exec.Command("dapr", "uninstall", "--all")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	err := cmd.Run()
+	if err != nil {
+		fmt.Printf("Error uninstalling Dapr: %v\n", err)
+		return
+	}
+}
+
+func EnsureDapr() {
+	cmd := exec.Command("dapr", "version")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	err := cmd.Run()
+	if err != nil {
+		fmt.Printf("Dapr is not installed. Please install dapr CLI first: %v\n", err)
+
+	}
+	daprUninstall()
+	daprInit()
 }
 
 func startDaprSidecar(ctx context.Context, appID string, appPort int, daprPort int, daprGrpcPort int, componentsPath string, done chan int) {
