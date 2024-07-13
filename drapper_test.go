@@ -42,3 +42,40 @@ func TestEventH(t *testing.T) {
 	}
 
 }
+
+func TestDapprService(t *testing.T) {
+	handler := func(ctx context.Context, in *common.InvocationEvent) (out *common.Content, derr error) {
+		out = &common.Content{
+			Data:        in.Data,
+			ContentType: in.ContentType,
+			DataTypeURL: in.DataTypeURL,
+		}
+		return
+	}
+
+	service := &DaprService{
+		AppID:        "myapp",
+		AppPort:      8001,
+		DaprHTTPPort: 3500,
+		DaprGRPCPort: 50001,
+		Handlers: map[string]common.ServiceInvocationHandler{
+			"search": handler,
+		},
+	}
+	t.Cleanup(func() {
+		err := service.Stop()
+		if err != nil {
+			t.Fatalf("Error stopping service: %v", err)
+		}
+	})
+	daprClient, err := service.Start()
+	require.NoError(t, err)
+
+	content, err := daprClient.InvokeMethodWithContent(context.Background(), "myapp", "search", "POST", &dapr.DataContent{
+		ContentType: "application/json",
+		Data:        []byte(`{"data": "hello world"}`),
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, `{"data": "hello world"}`, string(content))
+}
