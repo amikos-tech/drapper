@@ -1,4 +1,4 @@
-module github.com/amikos-tech/darpper
+module github.com/amikos-tech/drapper
 
 go 1.22
 
