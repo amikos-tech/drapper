@@ -147,15 +147,22 @@ func RegisterEventHandler(ctx context.Context, appID string, pubsubName string, 
 	}, nil
 }
 
+type TopicEventHandler struct {
+	Subscription *common.Subscription
+	Handler      func(ctx context.Context, e *common.TopicEvent) (retry bool, err error)
+}
+
 type DaprService struct {
-	AppID        string
-	AppPort      int
-	DaprHTTPPort int
-	DaprGRPCPort int
-	Command      *exec.Cmd
-	Handlers     map[string]common.ServiceInvocationHandler
-	Service      common.Service
-	Wg           sync.WaitGroup
+	AppID                     string
+	AppPort                   int
+	DaprHTTPPort              int
+	DaprGRPCPort              int
+	Command                   *exec.Cmd
+	ServiceInvocationHandlers map[string]common.ServiceInvocationHandler
+	TopicEventHandlers        []TopicEventHandler
+	Service                   common.Service
+	Wg                        sync.WaitGroup
+	ResourcePath              string
 }
 
 func (s *DaprService) Start() (dapr.Client, error) {
@@ -164,11 +171,17 @@ func (s *DaprService) Start() (dapr.Client, error) {
 	service := daprd.NewService(fmt.Sprintf(":%d", s.AppPort))
 	s.Service = service
 
-	for handle, serviceHandler := range s.Handlers {
+	for handle, serviceHandler := range s.ServiceInvocationHandlers {
 		if err := service.AddServiceInvocationHandler(handle, serviceHandler); err != nil {
 			errChan <- fmt.Errorf("failed to add handler %s: %v", s.AppID, err)
 		}
 	}
+	for _, topicHandler := range s.TopicEventHandlers {
+		if err := service.AddTopicEventHandler(topicHandler.Subscription, topicHandler.Handler); err != nil {
+			errChan <- fmt.Errorf("failed to add topic handler %s: %v", s.AppID, err)
+		}
+	}
+
 	s.Wg.Add(1)
 	go func(s *DaprService, daprService common.Service) {
 		defer s.Wg.Done()
@@ -184,12 +197,18 @@ func (s *DaprService) Start() (dapr.Client, error) {
 	case <-time.After(2 * time.Second): // Adjust timeout as necessary
 		fmt.Printf("OK") // things should start within 2 sec - this is brittle but works for now
 	}
-
-	s.Command = exec.Command("dapr", "run",
+	extraArgs := []string{
+		"run",
 		"--app-id", s.AppID,
 		"--app-port", fmt.Sprintf("%d", s.AppPort),
 		"--dapr-http-port", fmt.Sprintf("%d", s.DaprHTTPPort),
 		"--dapr-grpc-port", fmt.Sprintf("%d", s.DaprGRPCPort),
+	}
+	if s.ResourcePath != "" {
+		extraArgs = append(extraArgs, "--resources-path", s.ResourcePath)
+	}
+	s.Command = exec.Command("dapr",
+		extraArgs...,
 	)
 
 	s.Command.SysProcAttr = &syscall.SysProcAttr{

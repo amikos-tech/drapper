@@ -44,6 +44,7 @@ func TestEventH(t *testing.T) {
 }
 
 func TestDapprService(t *testing.T) {
+	EnsureDapr()
 	handler := func(ctx context.Context, in *common.InvocationEvent) (out *common.Content, derr error) {
 		out = &common.Content{
 			Data:        in.Data,
@@ -53,14 +54,28 @@ func TestDapprService(t *testing.T) {
 		return
 	}
 
+	handlerTopic := func(ctx context.Context, e *common.TopicEvent) (retry bool, err error) {
+		t.Logf("Received event: %s %v\n", e.Type, e.Data)
+		return false, nil
+	}
+
 	service := &DaprService{
 		AppID:        "myapp",
 		AppPort:      8001,
 		DaprHTTPPort: 3500,
 		DaprGRPCPort: 50001,
-		Handlers: map[string]common.ServiceInvocationHandler{
+		ServiceInvocationHandlers: map[string]common.ServiceInvocationHandler{
 			"search": handler,
 		},
+		TopicEventHandlers: []TopicEventHandler{{
+			Subscription: &common.Subscription{
+				PubsubName: "pubsub",
+				Topic:      "search-result",
+				Route:      "/search-events",
+			},
+			Handler: handlerTopic,
+		}},
+		ResourcePath: "./components",
 	}
 	t.Cleanup(func() {
 		err := service.Stop()
@@ -75,7 +90,9 @@ func TestDapprService(t *testing.T) {
 		ContentType: "application/json",
 		Data:        []byte(`{"data": "hello world"}`),
 	})
+	require.NoError(t, err, "Error invoking method: %v\n", err)
+	err = daprClient.PublishEvent(context.Background(), "pubsub", "search-result", []byte(`{"data": "hello world"}`))
+	require.NoError(t, err, "Error publishing event: %v\n", err)
 
-	require.NoError(t, err)
 	require.Equal(t, `{"data": "hello world"}`, string(content))
 }
