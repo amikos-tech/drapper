@@ -99,7 +99,7 @@ func startDaprSidecar(ctx context.Context, appID string, appPort int, daprPort i
 	}
 }
 
-func RegisterEventHandler(ctx context.Context, pubsubName string, topic string, route string, handler func(ctx context.Context, e *common.TopicEvent) (retry bool, err error)) (cancel func(), err error) {
+func RegisterEventHandler(ctx context.Context, pubsubName string, topic string, route string, resourcePath string, handler func(ctx context.Context, e *common.TopicEvent) (retry bool, err error)) (cancel func(), err error) {
 	s := daprd.NewService(":8886") //TODO get random free port
 	// Create a mock subscription handler
 	err = s.AddTopicEventHandler(&common.Subscription{
@@ -122,7 +122,7 @@ func RegisterEventHandler(ctx context.Context, pubsubName string, topic string, 
 		fmt.Println("Consumer service stopped")
 	}()
 	daprStarted := make(chan int)
-	go startDaprSidecar(ctx, "myapp", 8886, 3500, 50001, "./components", daprStarted)
+	go startDaprSidecar(ctx, "myapp", 8886, 3500, 50001, resourcePath, daprStarted)
 	var sidecarpid int = -1
 	if x := <-daprStarted; x > 0 {
 		fmt.Println("Dapr sidecar started successfully", x)
