@@ -21,7 +21,7 @@ func TestEventH(t *testing.T) {
 		return false, nil
 	}
 
-	closeEvent, err := RegisterEventHandler(ctx, "pubsub", "search-result", "/search", "./components", handler)
+	closeEvent, err := RegisterEventHandler(ctx, "myapp", "pubsub", "search-result", "/search", "./components", handler)
 	require.NoError(t, err)
 	daprClient, err := dapr.NewClient()
 	require.NoError(t, err, "Error creating Dapr client: %v\n", err)
