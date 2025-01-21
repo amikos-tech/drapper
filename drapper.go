@@ -18,7 +18,7 @@ import (
 
 // daprInit initializes Dapr
 func daprInit() { //nolint:deadcode,unused
-	cmd := exec.Command("dapr", "init", "--dev")
+	cmd := exec.Command("dapr", "init")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	err := cmd.Run()
